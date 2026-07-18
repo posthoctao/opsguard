@@ -1,78 +1,86 @@
-# 智能故障诊断与安全修复后端
+# AI 故障诊断与安全修复后端
 
-这是一个事件驱动的 **AI 后端系统**，用于服务故障诊断、策略控制的运行时修复、人工审批、确定性恢复验证，以及隔离式代码修复。
+这是一个事件驱动的 AI 后端系统，用于完成：
 
-项目重点不是制作聊天机器人或单一运维脚本，而是展示如何把大模型接入一个有状态、可审计、受权限约束的后端系统。大模型负责不确定性的故障分析与代码推理；后端代码负责状态管理、权限判断、实际执行、测试验证和审计记录。
+- Claude 故障诊断
+- Docker 服务重启与版本回滚
+- 高风险操作人工审批
+- 修复后的确定性验证
+- 隔离式代码修复
+- 人工批准后发布 GitHub Pull Request
 
-> 说明：为保证 API、数据库和程序逻辑稳定，状态值、动作名、字段名等机器可读常量继续使用英文，例如 `RESOLVED`、`restart_service`。所有面向面试官和使用者的文档、接口说明、提示词、事件信息和命令行输出均已中文化。
+项目核心是将大模型的推理能力接入一个**有状态、可审计、受权限约束**的后端系统，而不是让模型直接执行 Shell 或 Docker 命令。
 
-## 当前架构
+## 系统架构
 
-```text
-Prometheus / 测试故障注入器
-              |
-              v
-          FastAPI 后端
-              |
-     +--------+---------+
-     |                  |
-运行时故障流程        代码修复流程
-     |                  |
-Claude / 规则诊断     隔离式修复 Worker
-     |              Claude / 规则代码 Agent
-策略引擎                 |
-     |               受保护工作区
-Docker 运行时             |
-     |               独立 pytest 验证
-恢复验证                 |
-                    人工审核补丁
-                         |
-                   可选发布 GitHub PR
+```mermaid
+flowchart TD
+    A[告警 / 故障注入] --> B[FastAPI 后端]
+    B --> C[运行证据收集]
+    C --> D[Claude 结构化诊断]
+    D --> E[策略引擎]
+
+    E -->|低风险| F[Docker Runtime]
+    E -->|高风险| G[人工审批]
+    G --> F
+
+    F --> H[确定性恢复验证]
+    H --> I[RESOLVED / ESCALATED]
+
+    B --> J[Repair Worker]
+    J --> K[Claude Code Repair Agent]
+    K --> L[独立 pytest 验证]
+    L --> M[人工审核]
+    M --> N[GitHub PR]
 ```
 
-## Phase 3 新增能力
-
-- 独立的 `repair-worker` 服务，不挂载 Docker Socket，也不持有 GitHub Token。
-- 仅允许后端白名单中的源码模板复制到独立可写工作区。
-- 支持 Claude Agent SDK，无法调用时也可使用确定性规则模式完成演示。
-- 限制文件访问和 Bash 命令，启用 SDK 沙箱，禁止非沙箱命令，并禁止修改测试文件。
-- 基线测试和修复后测试都由普通 Python 代码独立执行，不采信 Agent 自己声称的测试结果。
-- 修复任务及完整事件时间线持久化到数据库。
-- 经过测试的补丁必须单独人工审批。
-- 补丁批准后可由后端发布 GitHub Pull Request。
-- GitHub 凭证始终保留在后端，不进入 Agent 边界。
-
-## 两条核心工作流
+## 核心工作流
 
 ### 运行时故障修复
 
 ```text
 接收告警
-→ 收集运行证据
-→ AI 结构化诊断
-→ 服务端策略评估
+→ 收集服务、容器、部署和指标证据
+→ Claude 输出结构化诊断
+→ 服务端检查动作和参数
 → 自动执行低风险操作，或等待人工审批
-→ 执行 Docker 操作
-→ 确定性健康验证
-→ RESOLVED / ESCALATED
+→ Docker 执行重启或回滚
+→ 验证服务是否真正恢复
 ```
+
+支持的演示场景：
+
+| 场景 | 修复动作 | 审批 |
+|---|---|---|
+| 服务不可用 | `restart_service` | 不需要 |
+| 稳定版本高延迟 | `restart_service` | 不需要 |
+| 部署回归 | `rollback_deployment` | 必须 |
 
 ### 代码修复
 
 ```text
-运行时 Incident 进入终态
-→ 创建代码修复任务
-→ 复制隔离源码
-→ 基线测试失败
-→ 受约束的代码 Agent 修改源码
-→ 检查受保护文件
-→ 独立测试通过
+创建 Repair Job
+→ 复制白名单源码到隔离工作区
+→ 确认基线测试失败
+→ Claude 生成最小补丁
+→ 检查测试和受保护文件未被修改
+→ 独立运行 pytest
 → PATCH_READY
-→ 人工批准或拒绝
-→ 可选发布 PR
+→ 人工审批
+→ 可选发布 GitHub PR
 ```
 
-运行时回滚与代码修改是两个独立决定。恢复服务可用性，不代表系统自动获得修改源码仓库的权限。
+## 安全设计
+
+- 故障诊断 Agent 没有 Shell、文件系统或 Docker 工具。
+- 模型只能选择白名单动作，不能生成任意执行命令。
+- 后端会重新构造可信参数，不直接执行模型返回的容器参数。
+- 服务重启属于低风险操作，可自动执行。
+- 版本回滚属于高风险操作，必须人工审批。
+- Repair Worker 不持有 Docker Socket 或 GitHub Token。
+- 代码补丁必须经过独立测试和人工审核。
+- 系统不会自动合并 Pull Request。
+- 所有状态变化、诊断、审批、执行和验证结果都会写入审计事件。
 
 ## 技术栈
 
@@ -81,201 +89,158 @@ Docker 运行时             |
 - SQLAlchemy + SQLite
 - Claude Agent SDK
 - Docker SDK + Docker Compose
-- Pydantic 结构化输出
+- Pydantic
 - httpx
 - pytest
-- 可选的 GitHub Git Data API 集成
+- GitHub Actions
 
-## 使用 Docker 快速启动
+## 快速启动
 
-### 1. 创建环境配置
+### 1. 配置环境变量
 
 ```bash
 cp .env.example .env
 ```
 
-默认配置使用确定性的规则诊断和规则代码修复，因此没有 API Key 也可以运行完整演示。
+使用 Claude 时配置：
 
-### 2. 启动全部服务
+```env
+AI_PROVIDER=claude
+AI_FALLBACK_TO_RULES=false
+ANTHROPIC_API_KEY=你的_API_Key
+
+REPAIR_AGENT_PROVIDER=claude
+REPAIR_CLAUDE_MAX_TURNS=20
+```
+
+### 2. 启动服务
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
 服务地址：
 
-- 后端 API：`http://localhost:8000`
-- Swagger 接口文档：`http://localhost:8000/docs`
-- 故障演示服务：`http://localhost:8081`
-- 代码修复 Worker：内部端口 `8090`
-- 无密钥验证服务：仅内部网络端口 `8100`
+| 服务 | 地址 |
+|---|---|
+| 后端 API | `http://localhost:8001` |
+| Swagger | `http://localhost:8001/docs` |
+| 演示服务 | `http://localhost:8081` |
 
-### 3. 运行自动修复演示
+## 运行演示
+
+### 服务不可用
 
 ```bash
-docker compose exec backend python scripts/run_demo.py service_unavailable \
+docker compose exec -T backend \
+  python scripts/run_demo.py service_unavailable \
   --base-url http://127.0.0.1:8000
 ```
 
-### 4. 运行“回滚 + 代码修复”演示
+### 部署回归
 
 ```bash
-docker compose exec backend python scripts/run_repair_demo.py \
+docker compose exec -T backend \
+  python scripts/run_demo.py deploy_regression \
+  --approve \
   --base-url http://127.0.0.1:8000
 ```
 
-预期核心结果：
-
-```text
-运行时 Incident：WAITING_FOR_APPROVAL → RESOLVED
-代码修复：QUEUED → RUNNING → PATCH_READY → APPROVED
-独立测试：通过
-修改文件：sample_service/cache.py
-```
-
-## 启用 Claude Agent SDK
-
-在 `.env` 中设置：
-
-```env
-AI_PROVIDER=claude
-REPAIR_AGENT_PROVIDER=claude
-ANTHROPIC_API_KEY=你的_API_Key
-```
-
-然后重新构建：
+### 高延迟
 
 ```bash
-docker compose up --build
+docker compose exec -T backend \
+  python scripts/run_demo.py high_latency \
+  --base-url http://127.0.0.1:8000
 ```
 
-故障诊断 Agent 不拥有任何工具。代码修复 Agent 只在隔离式 Repair Worker 中运行，并且仅能访问独立工作区。
+### 代码修复
 
-## 可选：发布 GitHub Pull Request
-
-PR 发布默认关闭。配置：
-
-```env
-GITHUB_PR_ENABLED=true
-GITHUB_TOKEN=你的细粒度令牌
-GITHUB_REPOSITORY=owner/repository
-GITHUB_BASE_BRANCH=main
+```bash
+docker compose exec -T backend \
+  python scripts/run_repair_demo.py \
+  --base-url http://127.0.0.1:8000
 ```
 
-补丁达到 `APPROVED` 后调用：
+代码修复 Agent 会修复 `RecentRequestBuffer` 无容量限制的问题，并且只允许修改：
 
 ```text
-POST /api/v1/repairs/{repair_job_id}/publish-pr
+sample_service/cache.py
 ```
 
-后端会创建 Git Blob、Tree、Commit、Branch 和 Pull Request。Repair Worker 与 Claude 都不会接触 GitHub Token。目标仓库需要包含与所选源码模板相同的文件路径。
+## 最小端到端评测
 
-## 核心 API
-
-### Incident 管理
+评测规模：
 
 ```text
-POST /api/v1/alerts
-GET  /api/v1/incidents
-GET  /api/v1/incidents/{incident_id}
-POST /api/v1/incidents/{incident_id}/process
-POST /api/v1/incidents/{incident_id}/approve
-POST /api/v1/incidents/{incident_id}/reject
+service_unavailable × 3
+deploy_regression × 3
+high_latency × 3
+code_repair × 2
 ```
 
-### 代码修复管理
+最终结果：
+
+| 指标 | 结果 |
+|---|---:|
+| 运行时完整成功率 | 9/9，100% |
+| 修复动作准确率 | 9/9，100% |
+| 审批流程正确率 | 9/9，100% |
+| 修复后验证通过率 | 9/9，100% |
+| 代码修复成功率 | 2/2，100% |
+| 修改范围合规率 | 2/2，100% |
+| 平均 Incident 处理时间 | 20.88 秒 |
+| 平均代码修复时间 | 53.45 秒 |
+
+运行评测：
+
+```bash
+python evaluation/run_minimal_evaluation.py \
+  --base-url http://127.0.0.1:8001
+```
+
+完整结果：
+
+- [`evaluation/results/final_summary.md`](evaluation/results/final_summary.md)
+- [`evaluation/results/final_results.csv`](evaluation/results/final_results.csv)
+
+> 该评测用于验证项目流程和可复现性，样本量较小，不代表生产环境性能。
+
+## 自动化测试
+
+```bash
+AI_PROVIDER=rules \
+RUNTIME_BACKEND=memory \
+REPAIR_AGENT_PROVIDER=rules \
+GITHUB_PR_ENABLED=false \
+pytest -q
+```
+
+当前结果：
 
 ```text
-POST /api/v1/incidents/{incident_id}/repairs
-GET  /api/v1/repairs
-GET  /api/v1/repairs/{repair_job_id}
-POST /api/v1/repairs/{repair_job_id}/approve
-POST /api/v1/repairs/{repair_job_id}/reject
-POST /api/v1/repairs/{repair_job_id}/publish-pr
+12 passed
 ```
 
-### 故障演示运行时
+GitHub Actions 会在提交和 Pull Request 时自动运行语法检查和测试，不调用 Claude API。
 
-```text
-GET  /api/v1/runtime/state
-POST /api/v1/runtime/faults
-POST /api/v1/runtime/reset
-```
+## GitHub PR
 
-## 安全边界
+经过测试并人工批准的补丁，可以由后端发布到独立演示仓库：
 
-### 故障诊断 Agent
+[incident-repair-demo](https://github.com/posthoctao/incident-repair-demo)
 
-- 只接收告警和后端已经收集的证据。
-- 工具集合为空。
-- 不能执行 Shell 命令，也不能读取文件。
-- 只能输出结构化诊断建议，不能声称已经执行修复。
+Repair Worker 和 Claude 无法接触 GitHub Token，也不会自动合并 PR。
 
-### 运行时执行器
+## 当前限制
 
-- 容器名、镜像、网络和标签全部由服务端固定配置。
-- 不接受模型生成的任意 Shell 命令。
-- 完整记录 `AUTHORIZED → EXECUTING → SUCCEEDED / FAILED`。
-- 只有独立验证通过后才把 Incident 标记为已解决。
+这是用于作品集展示的工程化 MVP，不是生产级故障管理平台。
 
-### 代码修复 Worker
+主要限制：
 
-- 作为独立容器运行，不挂载 Docker Socket。
-- 不持有 GitHub 凭证。
-- 只复制一个由后端白名单指定的源码模板。
-- 禁止修改测试、依赖、CI 和非白名单源码。
-- Bash 仅允许 pytest、compileall 和 ruff 验证命令。
-- 禁止非沙箱命令和 Bash 网络访问。
-- 基线与最终测试发送给独立验证服务，该服务没有模型、Docker 或 GitHub 凭证。
-
-### 无密钥验证服务
-
-- 位于无外网出口的 Docker 内部网络。
-- 只接收服务端生成的修复任务 ID。
-- 以只读方式挂载工作区，并在清理后的环境中运行固定 pytest 命令。
-- 不持有 Anthropic、Docker 或 GitHub 凭证。
-
-### PR 发布器
-
-- 仅在补丁明确通过人工审批后，由后端执行。
-- 使用后端持有的凭证。
-- 只能发布已经保存在已批准 Repair Job 中的文件内容。
-
-## 状态和动作说明
-
-为保持代码接口稳定，以下值继续使用英文：
-
-| 机器状态 | 中文含义 |
-|---|---|
-| `OPEN` | 已创建，等待处理 |
-| `COLLECTING_EVIDENCE` | 正在收集证据 |
-| `DIAGNOSING` | 正在诊断 |
-| `PLANNING` | 正在评估修复计划 |
-| `WAITING_FOR_APPROVAL` | 等待人工审批 |
-| `REMEDIATING` | 正在执行修复 |
-| `VERIFYING` | 正在验证恢复结果 |
-| `RESOLVED` | 已解决并验证 |
-| `ESCALATED` | 已升级人工处理 |
-| `FAILED` | 流程执行失败 |
-
-| 机器动作 | 中文含义 |
-|---|---|
-| `restart_service` | 重启服务 |
-| `rollback_deployment` | 回滚部署 |
-| `no_safe_action` | 没有可安全自动执行的操作 |
-
-## 当前定位
-
-本项目是一个可运行、可测试、可演示的工程化 AI 后端 MVP，适合用于展示：
-
-- Agent 与传统后端逻辑的职责边界
-- 事件驱动 API
-- 状态机与数据库持久化
-- 工具白名单和策略引擎
-- Human-in-the-loop
-- 真实 Docker 操作
-- 确定性恢复验证
-- 隔离式代码修复
-- 审计日志与可追踪性
-
-它仍然是求职演示系统，不应直接作为生产环境的自动运维平台使用。
+- 使用 SQLite 和 FastAPI 后台任务
+- 仅支持单机 Docker 演示环境
+- 没有用户认证和多租户权限
+- 没有接入真实 Kubernetes、Prometheus 或任务队列
+- 故障和代码修复目标是可复现的受控样例
+- 模型调用仍可能受到超时和输出波动影响
