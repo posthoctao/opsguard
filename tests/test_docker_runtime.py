@@ -138,9 +138,13 @@ def test_restart_uses_only_the_allowlisted_container(monkeypatch):
 
 
 def test_rollback_recreates_the_container_with_stable_version(monkeypatch):
-    old = FakeContainer(version="v2-buggy", startup_fault="deploy_regression")
+    old = FakeContainer(
+        version="v2-buggy",
+        startup_fault="deploy_regression",
+    )
     client = FakeDockerClient(old)
     runtime = DockerRuntime(_settings(), client=client)
+
     monkeypatch.setattr(
         runtime,
         "_wait_for_service",
@@ -159,20 +163,34 @@ def test_rollback_recreates_the_container_with_stable_version(monkeypatch):
     result = asyncio.run(
         runtime.execute_action(
             "rollback_deployment",
-            {"service_name": "demo-api", "target_version": "v1-stable"},
+            {
+                "service_name": "demo-api",
+                "target_version": "v1-stable",
+            },
         )
     )
 
     assert result["target_version"] == "v1-stable"
     assert old.remove_calls == 1
+
     call = client.containers.run_calls[0]
+
     assert call["environment"] == {
         "APP_VERSION": "v1-stable",
         "STARTUP_FAULT": "none",
     }
     assert call["network"] == "incident-ai-network"
-    assert call["network_aliases"] == ["demo-service"]
 
+    # Docker SDK 的 containers.run() 不支持 network_aliases 参数，
+    # 当前通过固定受管容器名进行服务访问。
+    assert "network_aliases" not in call
+
+    assert call["ports"] == {
+        "8081/tcp": 8081,
+    }
+    assert call["restart_policy"] == {
+        "Name": "unless-stopped",
+    }
 
 def test_rollback_rejects_non_allowlisted_target():
     runtime = DockerRuntime(_settings(), client=FakeDockerClient(FakeContainer()))
