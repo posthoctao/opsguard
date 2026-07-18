@@ -1,0 +1,124 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: sqlite:////app/data/incidents.db
+      AI_PROVIDER: ${AI_PROVIDER:-rules}
+      AI_FALLBACK_TO_RULES: ${AI_FALLBACK_TO_RULES:-true}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      RUNTIME_BACKEND: docker
+      DOCKER_CONTAINER_NAME: incident-ai-demo-service
+      DOCKER_DEMO_SERVICE_URL: http://incident-ai-demo-service:8081
+      DOCKER_NETWORK_NAME: incident-ai-network
+      DOCKER_NETWORK_ALIAS: demo-service
+      DOCKER_DEMO_IMAGE: incident-ai-demo:local
+      DOCKER_DEMO_HOST_PORT: 8081
+      REPAIR_WORKER_URL: http://repair-worker:8090
+      REPAIR_SOURCE_PROFILE: demo-buffer-bug
+      GITHUB_PR_ENABLED: ${GITHUB_PR_ENABLED:-false}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:-}
+      GITHUB_BASE_BRANCH: ${GITHUB_BASE_BRANCH:-main}
+      AUTO_PROCESS_ALERTS: "true"
+    volumes:
+      - incident_data:/app/data
+      # 仅用于本地演示。Docker Socket 具有较高的 Daemon 权限，因此 Runtime
+      # 还会强制校验固定容器名和受管标签。
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      demo-service:
+        condition: service_healthy
+      repair-worker:
+        condition: service_healthy
+    networks:
+      - incident-network
+
+  repair-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.repair
+    environment:
+      REPAIR_AGENT_PROVIDER: ${REPAIR_AGENT_PROVIDER:-rules}
+      REPAIR_CLAUDE_MODEL: ${REPAIR_CLAUDE_MODEL:-claude-sonnet-4-6}
+      REPAIR_CLAUDE_MAX_TURNS: ${REPAIR_CLAUDE_MAX_TURNS:-12}
+      REPAIR_CLAUDE_TIMEOUT_SECONDS: ${REPAIR_CLAUDE_TIMEOUT_SECONDS:-180}
+      REPAIR_CLAUDE_MAX_BUDGET_USD: ${REPAIR_CLAUDE_MAX_BUDGET_USD:-2.0}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      REPAIR_SOURCE_ROOT: /app/repair_targets
+      REPAIR_WORKSPACE_ROOT: /workspaces/jobs
+      REPAIR_VERIFIER_URL: http://repair-verifier:8100
+    volumes:
+      - repair_workspaces:/workspaces
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      repair-verifier:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - incident-network
+      - repair-verification-network
+
+  repair-verifier:
+    build:
+      context: .
+      dockerfile: Dockerfile.verifier
+    volumes:
+      - repair_workspaces:/workspaces:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - repair-verification-network
+
+  demo-service:
+    image: incident-ai-demo:local
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    container_name: incident-ai-demo-service
+    ports:
+      - "8081:8081"
+    environment:
+      APP_VERSION: v1-stable
+      STARTUP_FAULT: none
+    labels:
+      com.incident-ai.managed: "true"
+    restart: unless-stopped
+    networks:
+      incident-network:
+        aliases:
+          - demo-service
+
+volumes:
+  incident_data:
+  repair_workspaces:
+
+networks:
+  incident-network:
+    name: incident-ai-network
+  repair-verification-network:
+    internal: true
