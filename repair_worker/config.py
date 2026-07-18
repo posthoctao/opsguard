@@ -11,7 +11,7 @@ class RepairWorkerSettings(BaseSettings):
 
     repair_agent_provider: Literal["rules", "claude"] = "rules"
     repair_claude_model: str = "claude-sonnet-4-6"
-    repair_claude_max_turns: int = Field(default=12, ge=1, le=30)
+    repair_claude_max_turns: int = Field(default=20, ge=1, le=30)
     repair_claude_timeout_seconds: int = Field(default=180, ge=30, le=900)
     repair_claude_max_budget_usd: float = Field(default=2.0, ge=0.05, le=20.0)
 

@@ -24,3 +24,6 @@ repair_workspaces/
 
 # 系统文件
 .DS_Store
+# 自动生成的评测时间戳文件
+evaluation/results/minimal_evaluation_*.csv
+evaluation/results/minimal_evaluation_summary_*.md

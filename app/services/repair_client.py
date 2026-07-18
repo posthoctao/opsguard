@@ -24,5 +24,15 @@ class HttpRepairWorkerClient(RepairWorkerClient):
                 f"{self.base_url}/internal/v1/repairs/run",
                 json=request.model_dump(mode="json"),
             )
-            response.raise_for_status()
+            if response.is_error:
+                try:
+                    error_detail = response.json()
+                except ValueError:
+                    error_detail = response.text
+
+                raise RuntimeError(
+                    "代码修复 Worker 请求失败："
+                    f"HTTP {response.status_code}，"
+                    f"响应内容：{error_detail}"
+                )
             return CodeRepairWorkerResult.model_validate(response.json())

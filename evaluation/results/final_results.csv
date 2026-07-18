@@ -1,0 +1,12 @@
+﻿run_type,scenario,run_number,success,incident_id,repair_job_id,final_status,diagnosis_present,diagnosis_confidence,expected_action,selected_action,action_correct,approval_expected,approval_triggered,approval_flow_correct,verification_success,tests_passed,changed_files,only_allowed_source_changed,duration_seconds,tool_duration_ms,error
+incident,service_unavailable,1,True,f6aad5ac-4e39-4e4e-9b83-aadcbdacda9d,,RESOLVED,True,0.95,restart_service,restart_service,True,False,False,True,True,,,,19.003,1133,
+incident,service_unavailable,2,True,f36cbf3e-431c-44e5-8243-b0c6056ea2d0,,RESOLVED,True,0.95,restart_service,restart_service,True,False,False,True,True,,,,18.969,1126,
+incident,service_unavailable,3,True,046e0f47-224c-48e6-a565-b8a0783926af,,RESOLVED,True,0.95,restart_service,restart_service,True,False,False,True,True,,,,20.047,1146,
+incident,deploy_regression,1,True,6faacbd9-7610-4cee-a953-1f497c4863c4,,RESOLVED,True,0.95,rollback_deployment,rollback_deployment,True,True,True,True,True,,,,20.845,843,
+incident,deploy_regression,2,True,7aff9a67-5efc-4150-bdce-0be747b72d14,,RESOLVED,True,0.95,rollback_deployment,rollback_deployment,True,True,True,True,True,,,,20.408,1398,
+incident,deploy_regression,3,True,4b53a2f4-b5a1-4857-b6ab-21912fd85960,,RESOLVED,True,0.95,rollback_deployment,rollback_deployment,True,True,True,True,True,,,,18.79,1336,
+incident,high_latency,1,True,842ecbd4-b886-4940-9577-e76fe93f8f1b,,RESOLVED,True,0.85,restart_service,restart_service,True,False,False,True,True,,,,18.574,1410,
+incident,high_latency,2,True,d6ec85bb-9c1f-40ed-9f76-fab15dba261e,,RESOLVED,True,0.95,restart_service,restart_service,True,False,False,True,True,,,,23.799,1423,
+incident,high_latency,3,True,61026763-671d-4f85-8e93-64f038c727de,,RESOLVED,True,0.8,restart_service,restart_service,True,False,False,True,True,,,,27.443,1490,
+code_repair,demo_buffer_bug,1,True,4b53a2f4-b5a1-4857-b6ab-21912fd85960,ac61f613-5860-46ed-b568-74d13b7c3c4c,PATCH_READY,,,,,,,,,,True,sample_service/cache.py,True,48.319,,
+code_repair,demo_buffer_bug,2,True,4b53a2f4-b5a1-4857-b6ab-21912fd85960,77d3ec3f-0a7d-4a96-b55f-f482d626fa25,PATCH_READY,,,,,,,,,,True,sample_service/cache.py,True,58.576,,
