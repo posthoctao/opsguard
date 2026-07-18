@@ -231,16 +231,3 @@ GitHub Actions 会在提交和 Pull Request 时自动运行语法检查和测试
 [incident-repair-demo](https://github.com/posthoctao/incident-repair-demo)
 
 Repair Worker 和 Claude 无法接触 GitHub Token，也不会自动合并 PR。
-
-## 当前限制
-
-这是用于作品集展示的工程化 MVP，不是生产级故障管理平台。
-
-主要限制：
-
-- 使用 SQLite 和 FastAPI 后台任务
-- 仅支持单机 Docker 演示环境
-- 没有用户认证和多租户权限
-- 没有接入真实 Kubernetes、Prometheus 或任务队列
-- 故障和代码修复目标是可复现的受控样例
-- 模型调用仍可能受到超时和输出波动影响
