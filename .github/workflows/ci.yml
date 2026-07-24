@@ -1,0 +1,71 @@
+name: OpsGuard CI
+
+run-name: CI #${{ github.run_number }}
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "README.md"
+      - "**/*.md"
+      - ".env.example"
+      - "docs/**"
+
+  pull_request:
+    paths-ignore:
+      - "README.md"
+      - "**/*.md"
+      - ".env.example"
+      - "docs/**"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 后端测试
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 配置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 检查 Python 语法
+        run: |
+          python -m compileall \
+            app \
+            demo_service \
+            repair_worker \
+            repair_verifier \
+            scripts
+
+      - name: 运行测试
+        env:
+          ENVIRONMENT: test
+          DATABASE_URL: sqlite:///./data/test-incidents.db
+          AI_PROVIDER: rules
+          AI_FALLBACK_TO_RULES: "true"
+          ANTHROPIC_API_KEY: ""
+          RUNTIME_BACKEND: memory
+          AUTO_PROCESS_ALERTS: "false"
+          REPAIR_AGENT_PROVIDER: rules
+          GITHUB_PR_ENABLED: "false"
+          GITHUB_TOKEN: ""
+          GITHUB_REPOSITORY: ""
+        run: |
+          mkdir -p data
+          pytest -q
