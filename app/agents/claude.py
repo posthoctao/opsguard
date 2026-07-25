@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
+
+from pydantic import ValidationError
 
 from app.agents.base import DiagnosisAgent
 from app.schemas import AlertCreate, DiagnosisDecision
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeAgentUnavailableError(RuntimeError):
@@ -13,21 +18,20 @@ class ClaudeAgentUnavailableError(RuntimeError):
 
 
 class ClaudeDiagnosisAgent(DiagnosisAgent):
-    """仅用于故障诊断和修复规划的 Claude Agent SDK 适配器。
-
-    该 Agent 不拥有 Shell 或文件系统工具；所有运行时变更都必须经过
-    服务端策略引擎和执行器。
-    """
-
     def __init__(
         self,
         model: str,
         max_turns: int = 3,
         timeout_seconds: int = 90,
+        max_correction_attempts: int = 2,
     ) -> None:
+        if max_correction_attempts < 0:
+            raise ValueError("max_correction_attempts 不能小于 0。")
+
         self.model = model
         self.max_turns = max_turns
         self.timeout_seconds = timeout_seconds
+        self.max_correction_attempts = max_correction_attempts
 
     async def diagnose(
         self,
@@ -47,7 +51,215 @@ class ClaudeDiagnosisAgent(DiagnosisAgent):
             ) from exc
 
         schema = DiagnosisDecision.model_json_schema()
+        base_prompt = self._build_diagnosis_prompt(alert, evidence)
+        options = ClaudeAgentOptions(
+            model=self.model,
+            system_prompt=(
+                "你是安全受控后端中的故障诊断组件。"
+                "你负责根据运行证据和受控运行手册生成结构化修复建议，"
+                "绝不能直接执行修复操作。"
+                "你需要保持安全，但不能在运行手册已经明确覆盖故障时"
+                "过度使用 no_safe_action。"
+            ),
+            tools=[],
+            allowed_tools=[],
+            disallowed_tools=[
+                "Bash",
+                "Read",
+                "Write",
+                "Edit",
+                "Glob",
+                "Grep",
+                "WebFetch",
+                "WebSearch",
+            ],
+            setting_sources=[],
+            strict_mcp_config=True,
+            mcp_servers={},
+            max_turns=self.max_turns,
+            output_format={
+                "type": "json_schema",
+                "schema": schema,
+            },
+        )
 
+        current_prompt = base_prompt
+        last_validation_error: ValidationError | None = None
+
+        try:
+            # timeout_seconds 控制整次诊断，包括自动纠错重试。
+            async with asyncio.timeout(self.timeout_seconds):
+                for attempt in range(self.max_correction_attempts + 1):
+                    structured, raw = await self._query_once(
+                        query_fn=query,
+                        result_message_type=ResultMessage,
+                        prompt=current_prompt,
+                        options=options,
+                    )
+
+                    if structured is None and not raw:
+                        raise ClaudeAgentUnavailableError(
+                            "Claude 未返回故障诊断结果。"
+                        )
+
+                    try:
+                        return self._validate_result(structured, raw)
+                    except ValidationError as exc:
+                        last_validation_error = exc
+
+                        if attempt >= self.max_correction_attempts:
+                            break
+
+                        correction_attempt = attempt + 1
+                        logger.warning(
+                            "Claude 结构化诊断校验失败，开始第 %s 次自动纠错：%s",
+                            correction_attempt,
+                            self._format_validation_errors(exc),
+                        )
+                        current_prompt = self._build_correction_prompt(
+                            base_prompt=base_prompt,
+                            structured=structured,
+                            raw=raw,
+                            validation_error=exc,
+                            correction_attempt=correction_attempt,
+                        )
+        except TimeoutError as exc:
+            raise ClaudeAgentUnavailableError(
+                "Claude 故障诊断及自动纠错超时。"
+            ) from exc
+        except ClaudeAgentUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ClaudeAgentUnavailableError(
+                f"Claude 故障诊断失败：{exc}"
+            ) from exc
+
+        error_details = (
+            self._format_validation_errors(last_validation_error)
+            if last_validation_error is not None
+            else []
+        )
+        raise ClaudeAgentUnavailableError(
+            "Claude 返回的结构化诊断结果无效，"
+            f"自动纠错 {self.max_correction_attempts} 次后仍未通过校验。"
+            f"校验错误：{json.dumps(error_details, ensure_ascii=False)}"
+        )
+
+    @staticmethod
+    async def _query_once(
+        query_fn: Any,
+        result_message_type: type[Any],
+        prompt: str,
+        options: Any,
+    ) -> tuple[Any, str | None]:
+        structured: Any = None
+        raw: str | None = None
+
+        async for message in query_fn(
+            prompt=prompt,
+            options=options,
+        ):
+            if isinstance(message, result_message_type):
+                structured = message.structured_output
+                raw = message.result
+
+        return structured, raw
+
+    @staticmethod
+    def _validate_result(
+        structured: Any,
+        raw: str | None,
+    ) -> DiagnosisDecision:
+        if structured is not None:
+            return DiagnosisDecision.model_validate(structured)
+        if raw:
+            return DiagnosisDecision.model_validate_json(raw)
+        raise ClaudeAgentUnavailableError("Claude 未返回故障诊断结果。")
+
+    def _build_correction_prompt(
+        self,
+        base_prompt: str,
+        structured: Any,
+        raw: str | None,
+        validation_error: ValidationError,
+        correction_attempt: int,
+    ) -> str:
+        invalid_output = self._serialize_invalid_output(structured, raw)
+        error_details = json.dumps(
+            self._format_validation_errors(validation_error),
+            ensure_ascii=False,
+            indent=2,
+        )
+
+        return f"""
+{base_prompt}
+
+## 自动纠错任务
+
+上一轮结构化输出未通过后端 Pydantic 校验。
+这是第 {correction_attempt} 次自动纠错，最多允许 {self.max_correction_attempts} 次。
+
+### 上一轮无效输出
+
+{invalid_output}
+
+### 校验错误
+
+{error_details}
+
+### 修正要求
+
+- 只返回一个符合 JSON Schema 的 JSON 对象，不要添加 Markdown 或解释文字。
+- 保留有证据支持的诊断内容，只修正字段缺失、字段类型、枚举值和动作参数。
+- restart_service 的 action_parameters 必须且只能包含 service_name。
+- rollback_deployment 的 action_parameters 必须且只能包含 service_name 和 target_version。
+- no_safe_action 的 action_parameters 必须为空对象。
+- 删除 container_id、image、container_name、network、port、command、shell 等未授权参数。
+- 不得修改告警信息或运行证据，不得扩大权限，也不得声称已经执行修复操作。
+""".strip()
+
+    @staticmethod
+    def _serialize_invalid_output(
+        structured: Any,
+        raw: str | None,
+    ) -> str:
+        if structured is not None:
+            try:
+                text = json.dumps(
+                    structured,
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                )
+            except TypeError:
+                text = repr(structured)
+        else:
+            text = raw or "<空输出>"
+
+        # 防止异常输出过长，避免纠错提示无限膨胀。
+        return text[:6000]
+
+    @staticmethod
+    def _format_validation_errors(
+        validation_error: ValidationError,
+    ) -> list[dict[str, str]]:
+        formatted: list[dict[str, str]] = []
+        for error in validation_error.errors(include_url=False):
+            location = ".".join(str(part) for part in error.get("loc", ()))
+            formatted.append(
+                {
+                    "field": location or "<root>",
+                    "type": str(error.get("type", "validation_error")),
+                    "message": str(error.get("msg", "校验失败")),
+                }
+            )
+        return formatted
+
+    @staticmethod
+    def _build_diagnosis_prompt(
+        alert: AlertCreate,
+        evidence: dict[str, Any],
+    ) -> str:
         alert_json = json.dumps(
             alert.model_dump(mode="json"),
             ensure_ascii=False,
@@ -59,7 +271,7 @@ class ClaudeDiagnosisAgent(DiagnosisAgent):
             indent=2,
         )
 
-        prompt = f"""
+        return f"""
 请诊断这起服务故障，只能根据下面提供的告警信息和运行证据进行判断。
 
 你的职责仅限于：
@@ -69,7 +281,6 @@ class ClaudeDiagnosisAgent(DiagnosisAgent):
 3. 返回符合指定 JSON Schema 的结构化结果。
 
 你不能直接执行操作，也不能声称任何操作已经执行。
-
 ## 允许的修复动作及适用范围
 
 ### restart_service
@@ -132,77 +343,7 @@ class ClaudeDiagnosisAgent(DiagnosisAgent):
 ## 告警信息
 
 {alert_json}
-
 ## 运行证据
 
 {evidence_json}
 """.strip()
-
-        options = ClaudeAgentOptions(
-            model=self.model,
-            system_prompt=(
-                "你是安全受控后端中的故障诊断组件。"
-                "你负责根据运行证据和受控运行手册生成结构化修复建议，"
-                "绝不能直接执行修复操作。"
-                "你需要保持安全，但不能在运行手册已经明确覆盖故障时"
-                "过度使用 no_safe_action。"
-            ),
-            tools=[],
-            allowed_tools=[],
-            disallowed_tools=[
-                "Bash",
-                "Read",
-                "Write",
-                "Edit",
-                "Glob",
-                "Grep",
-                "WebFetch",
-                "WebSearch",
-            ],
-            setting_sources=[],
-            strict_mcp_config=True,
-            mcp_servers={},
-            max_turns=self.max_turns,
-            output_format={
-                "type": "json_schema",
-                "schema": schema,
-            },
-        )
-
-        structured: Any = None
-        raw: str | None = None
-
-        try:
-            async with asyncio.timeout(self.timeout_seconds):
-                async for message in query(
-                    prompt=prompt,
-                    options=options,
-                ):
-                    if isinstance(message, ResultMessage):
-                        structured = message.structured_output
-                        raw = message.result
-
-        except TimeoutError as exc:
-            raise ClaudeAgentUnavailableError(
-                "Claude 故障诊断超时。"
-            ) from exc
-
-        except Exception as exc:  # noqa: BLE001
-            raise ClaudeAgentUnavailableError(
-                f"Claude 故障诊断失败：{exc}"
-            ) from exc
-
-        if isinstance(structured, dict):
-            return DiagnosisDecision.model_validate(structured)
-
-        if raw:
-            try:
-                return DiagnosisDecision.model_validate_json(raw)
-            except Exception as exc:  # noqa: BLE001
-                raise ClaudeAgentUnavailableError(
-                    "Claude 返回的结构化诊断结果无效。"
-                ) from exc
-
-        raise ClaudeAgentUnavailableError(
-            "Claude 未返回故障诊断结果。"
-        )

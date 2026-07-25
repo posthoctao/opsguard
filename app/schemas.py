@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.enums import (
     CodeRepairStatus,
@@ -30,6 +30,9 @@ class AlertCreate(BaseModel):
 class DiagnosisDecision(BaseModel):
     """AI 或规则诊断组件返回的结构化诊断结果。"""
 
+    # 禁止模型在顶层编造 Schema 之外的字段。
+    model_config = ConfigDict(extra="forbid")
+
     summary: str = Field(description="诊断摘要")
     root_cause: str = Field(description="推断的根因")
     confidence: float = Field(ge=0.0, le=1.0, description="诊断置信度，范围为 0 到 1")
@@ -39,7 +42,57 @@ class DiagnosisDecision(BaseModel):
         "rollback_deployment",
         "no_safe_action",
     ] = Field(description="建议动作；最终是否执行仍由后端策略引擎决定")
-    action_parameters: dict[str, Any] = Field(default_factory=dict, description="建议动作参数")
+    action_parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        description="建议动作参数",
+    )
+
+    @model_validator(mode="after")
+    def validate_action_parameters(self) -> "DiagnosisDecision":
+        """按动作校验参数白名单，让非法参数进入自动纠错流程。"""
+
+        parameter_rules: dict[str, tuple[set[str], set[str]]] = {
+            "restart_service": (
+                {"service_name"},
+                {"service_name"},
+            ),
+            "rollback_deployment": (
+                {"service_name", "target_version"},
+                {"service_name", "target_version"},
+            ),
+            "no_safe_action": (
+                set(),
+                set(),
+            ),
+        }
+        allowed, required = parameter_rules[self.recommended_action]
+        provided = set(self.action_parameters)
+
+        unexpected = sorted(provided - allowed)
+        missing = sorted(required - provided)
+
+        errors: list[str] = []
+        if unexpected:
+            errors.append(f"包含未授权参数：{', '.join(unexpected)}")
+        if missing:
+            errors.append(f"缺少必填参数：{', '.join(missing)}")
+
+        service_name = self.action_parameters.get("service_name")
+        if "service_name" in allowed and (
+            not isinstance(service_name, str) or not service_name.strip()
+        ):
+            errors.append("service_name 必须是非空字符串")
+
+        target_version = self.action_parameters.get("target_version")
+        if "target_version" in allowed and (
+            not isinstance(target_version, str) or not target_version.strip()
+        ):
+            errors.append("target_version 必须是非空字符串")
+
+        if errors:
+            raise ValueError("；".join(errors))
+
+        return self
 
 
 class RemediationPlan(BaseModel):
