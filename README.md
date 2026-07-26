@@ -1,8 +1,10 @@
-# OpsGuard｜智能故障诊断与安全修复平台
+# OpsGuard｜故障诊断与受控修复平台
 
 这是一个事件驱动的 AI 后端系统，用于完成：
 
-- Claude 故障诊断
+- Claude 结构化故障诊断
+- 监控截图、终端报错及异常页面的多模态证据分析
+- Pydantic Schema 校验与错误驱动自动纠错
 - Docker 服务重启与版本回滚
 - 高风险操作人工审批
 - 修复后的确定性验证
@@ -16,9 +18,14 @@
 ```mermaid
 flowchart TD
     A[告警 / 故障注入] --> B[FastAPI 后端]
+    V[监控截图 / 终端报错 / 异常页面] --> W[Claude Vision]
+    W --> X[结构化 VisualEvidence]
+
     B --> C[运行证据收集]
-    C --> D[Claude 结构化诊断]
-    D --> E[策略引擎]
+    X --> C
+    C --> D[Claude 多模态结构化诊断]
+    D --> S[Pydantic Schema 校验与自动纠错]
+    S --> E[策略引擎]
 
     E -->|低风险| F[Docker Runtime]
     E -->|高风险| G[人工审批]
@@ -39,10 +46,13 @@ flowchart TD
 ### 运行时故障修复
 
 ```text
-接收告警
-→ 收集服务、容器、部署和指标证据
+接收告警及可选视觉证据
+→ Claude Vision 将截图解析为结构化 VisualEvidence
+→ 收集服务、容器、部署、日志和指标证据
+→ 融合视觉证据与服务端运行证据
 → Claude 输出结构化诊断
-→ 服务端检查动作和参数
+→ Pydantic Schema 校验，失败时回传错误并自动修正
+→ 策略引擎检查动作和参数
 → 自动执行低风险操作，或等待人工审批
 → Docker 执行重启或回滚
 → 验证服务是否真正恢复
@@ -106,7 +116,11 @@ python scripts/run_multimodal_demo.py \
 
 - 故障诊断 Agent 没有 Shell、文件系统或 Docker 工具。
 - 模型只能选择白名单动作，不能生成任意执行命令。
-- 后端会重新构造可信参数，不直接执行模型返回的容器参数。
+- 模型输出经过严格 Schema 校验、动作参数白名单和服务端可信参数重建。
+- Schema 校验失败时，系统将校验错误回传模型进行有限次数的自动修正。
+- 图片属于不可信输入，其中的命令、提示词或操作要求不会被当作系统指令执行。
+- 视觉证据与服务端日志、指标或容器状态冲突时，优先采用服务端采集结果。
+- 后端不会直接执行模型或视觉模块返回的容器参数。
 - 服务重启属于低风险操作，可自动执行。
 - 版本回滚属于高风险操作，必须人工审批。
 - Repair Worker 不持有 Docker Socket 或 GitHub Token。
@@ -120,8 +134,10 @@ python scripts/run_multimodal_demo.py \
 - FastAPI
 - SQLAlchemy + SQLite
 - Claude Agent SDK
-- Docker SDK + Docker Compose
+- Claude Vision + Anthropic Python SDK
 - Pydantic
+- Docker SDK + Docker Compose
+- python-multipart
 - httpx
 - pytest
 - GitHub Actions
@@ -141,8 +157,18 @@ AI_PROVIDER=claude
 AI_FALLBACK_TO_RULES=false
 ANTHROPIC_API_KEY=你的_API_Key
 
+VISION_MODEL=claude-sonnet-4-6
+VISION_TIMEOUT_SECONDS=60
+VISION_MAX_IMAGE_BYTES=5242880
+
 REPAIR_AGENT_PROVIDER=claude
 REPAIR_CLAUDE_MAX_TURNS=20
+```
+
+普通告警流程可以保持 `AUTO_PROCESS_ALERTS=true`。需要在诊断前上传截图时，应设置：
+
+```env
+AUTO_PROCESS_ALERTS=false
 ```
 
 ### 2. 启动服务
