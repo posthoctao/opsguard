@@ -95,6 +95,64 @@ class DiagnosisDecision(BaseModel):
         return self
 
 
+
+class VisualEvidence(BaseModel):
+    """视觉模型从监控截图或报错页面中提取的结构化证据。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_type: Literal[
+        "monitoring_chart",
+        "error_page",
+        "terminal_screenshot",
+        "architecture_diagram",
+        "unknown",
+    ] = Field(description="图片证据类型")
+    summary: str = Field(min_length=1, max_length=1000, description="图片内容摘要")
+    detected_text: list[str] = Field(
+        default_factory=list,
+        max_length=30,
+        description="图片中与故障有关的文字",
+    )
+    detected_metrics: dict[str, str] = Field(
+        default_factory=dict,
+        description="图片中识别出的指标和值，统一保存为字符串",
+    )
+    anomalies: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="从图表或页面中观察到的异常",
+    )
+    related_services: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="图片中明确出现的服务名称",
+    )
+    limitations: list[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="图片模糊、裁剪或信息不足等限制",
+    )
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="视觉证据提取置信度",
+    )
+
+
+class VisualEvidenceRecord(BaseModel):
+    """保存到 Incident 中的视觉证据记录；原始图片不会写入数据库。"""
+
+    id: str = Field(description="视觉证据 ID")
+    filename: str = Field(description="原始文件名")
+    mime_type: Literal["image/png", "image/jpeg", "image/webp"] = Field(
+        description="图片 MIME 类型"
+    )
+    sha256: str = Field(min_length=64, max_length=64, description="图片内容哈希")
+    analysis: VisualEvidence = Field(description="视觉模型提取结果")
+    created_at: datetime = Field(description="证据创建时间")
+
+
 class RemediationPlan(BaseModel):
     """后端根据诊断结果生成的修复计划。"""
 

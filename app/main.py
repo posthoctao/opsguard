@@ -16,10 +16,10 @@ async def lifespan(_: FastAPI):
 settings = get_settings()
 app = FastAPI(
     title=settings.app_name,
-    version="0.3.0",
+    version="0.4.0",
     description=(
         "事件驱动的 AI 后端，用于故障诊断、策略控制的安全修复、"
-        "人工审批、确定性恢复验证和隔离式代码修复。"
+        "人工审批、确定性恢复验证、隔离式代码修复和多模态视觉证据分析。"
     ),
     lifespan=lifespan,
 )

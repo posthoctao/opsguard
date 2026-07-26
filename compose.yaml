@@ -13,6 +13,10 @@ services:
       AI_FALLBACK_TO_RULES: ${AI_FALLBACK_TO_RULES:-true}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-haiku-4-5-20251001}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      VISION_MODEL: ${VISION_MODEL:-claude-sonnet-4-6}
+      VISION_TIMEOUT_SECONDS: ${VISION_TIMEOUT_SECONDS:-60}
+      VISION_MAX_IMAGE_BYTES: ${VISION_MAX_IMAGE_BYTES:-5242880}
       RUNTIME_BACKEND: docker
       DOCKER_CONTAINER_NAME: opsguard-demo-service
       DOCKER_DEMO_SERVICE_URL: http://opsguard-demo-service:8081
@@ -26,7 +30,7 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:-}
       GITHUB_BASE_BRANCH: ${GITHUB_BASE_BRANCH:-main}
-      AUTO_PROCESS_ALERTS: "true"
+      AUTO_PROCESS_ALERTS: ${AUTO_PROCESS_ALERTS:-true}
     volumes:
       - incident_data:/app/data
       # 仅用于本地演示。Docker Socket 具有较高的 Daemon 权限，因此 Runtime

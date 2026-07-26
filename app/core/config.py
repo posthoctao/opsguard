@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     claude_max_turns: int = 3
     claude_timeout_seconds: int = 90
 
+    # 多模态视觉证据配置。图片仅用于证据提取，不会直接生成执行命令。
+    vision_model: str = "claude-sonnet-4-6"
+    vision_timeout_seconds: int = 60
+    vision_max_image_bytes: int = Field(
+        default=5 * 1024 * 1024,
+        ge=1024,
+        le=20 * 1024 * 1024,
+    )
+
     runtime_backend: Literal["memory", "http", "docker"] = "memory"
     demo_service_url: str = "http://demo-service:8081"
     runtime_timeout_seconds: float = 10.0

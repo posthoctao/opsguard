@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from app.agents.factory import build_diagnosis_agent
+from app.agents.vision import ClaudeVisionEvidenceAgent
 from app.core.config import get_settings
 from app.runtime.base import RuntimeAdapter
 from app.runtime.docker import DockerRuntime
@@ -34,6 +35,15 @@ def set_runtime_override(runtime: RuntimeAdapter | None) -> None:
     global _runtime_override
     _runtime_override = runtime
     get_runtime.cache_clear()
+
+
+@lru_cache
+def get_vision_agent() -> ClaudeVisionEvidenceAgent:
+    settings = get_settings()
+    return ClaudeVisionEvidenceAgent(
+        model=settings.vision_model,
+        timeout_seconds=settings.vision_timeout_seconds,
+    )
 
 
 def get_orchestrator() -> IncidentOrchestrator:

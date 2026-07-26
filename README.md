@@ -70,6 +70,38 @@ flowchart TD
 → 可选发布 GitHub PR
 ```
 
+
+## 多模态视觉证据
+
+OpsGuard 支持在 Incident 进入诊断前上传监控截图、报错页面或终端截图。
+后端使用 Claude Vision 将图片转换为受 Pydantic 约束的 `VisualEvidence`，
+再与服务端采集的日志、版本、健康状态和指标合并后进行诊断。
+
+原始图片不会写入数据库；系统仅保存图片哈希、文件元数据和结构化视觉证据。
+截图属于不可信输入，图片中的命令或提示词不会进入执行层。当截图信息与
+服务端运行证据冲突时，诊断 Agent 优先采用服务端证据。
+
+多模态演示需要先关闭告警自动处理，以便在诊断前上传截图：
+
+```bash
+AUTO_PROCESS_ALERTS=false docker compose up -d --build
+```
+
+然后运行：
+
+```bash
+python scripts/run_multimodal_demo.py \
+  service_unavailable \
+  /path/to/monitoring.png \
+  --base-url http://localhost:8001
+```
+
+也可以在 Swagger 中按顺序调用：
+
+1. `POST /api/v1/alerts`
+2. `POST /api/v1/incidents/{incident_id}/visual-evidence`
+3. `POST /api/v1/incidents/{incident_id}/process`
+
 ## 安全设计
 
 - 故障诊断 Agent 没有 Shell、文件系统或 Docker 工具。

@@ -41,9 +41,14 @@ class IncidentOrchestrator:
                     return
                 self._transition(db, incident, IncidentStatus.COLLECTING_EVIDENCE, "正在收集运行时证据。")
                 alert = AlertCreate.model_validate(incident.alert_payload)
+                existing_evidence = dict(incident.evidence or {})
                 db.commit()
 
-            evidence = await self.runtime.collect_evidence(alert.service_name)
+            runtime_evidence = await self.runtime.collect_evidence(alert.service_name)
+            evidence = self._merge_evidence(
+                runtime_evidence=runtime_evidence,
+                existing_evidence=existing_evidence,
+            )
             with session_scope() as db:
                 incident = get_incident(db, incident_id)
                 incident.evidence = evidence
@@ -229,6 +234,23 @@ class IncidentOrchestrator:
                 )
             db.commit()
 
+
+
+    @staticmethod
+    def _merge_evidence(
+        runtime_evidence: dict[str, Any],
+        existing_evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """合并服务端运行证据和处理前上传的视觉证据。
+
+        运行时证据始终由后端重新采集；仅保留此前写入的 visual_evidence，
+        避免旧的运行状态覆盖本次采集结果。
+        """
+        merged = dict(runtime_evidence)
+        visual_evidence = existing_evidence.get("visual_evidence")
+        if isinstance(visual_evidence, list) and visual_evidence:
+            merged["visual_evidence"] = visual_evidence
+        return merged
 
     def _build_remediation_plan(
         self,
