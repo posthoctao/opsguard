@@ -251,7 +251,7 @@ pytest -q
 当前结果：
 
 ```text
-12 passed
+18 passed
 ```
 
 GitHub Actions 会在提交和 Pull Request 时自动运行语法检查和测试，不调用 Claude API。
