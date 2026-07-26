@@ -13,7 +13,7 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    app_name: str = "智能故障诊断与安全修复后端"
+    app_name: str = "OpsGuard｜故障诊断与受控修复后端"
     environment: str = "development"
     api_prefix: str = "/api/v1"
     database_url: str = "sqlite:///./data/incidents.db"
